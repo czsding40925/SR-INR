@@ -137,3 +137,13 @@ with open(args.logdir + f'/results_mean.json', 'w') as f:
 print('Aggregate results:')
 print(f'Full precision, bpp: {results_mean["fp_bpp"]:.2f}, psnr: {results_mean["fp_psnr"]:.2f}')
 print(f'Half precision, bpp: {results_mean["hp_bpp"]:.2f}, psnr: {results_mean["hp_psnr"]:.2f}')
+
+'''
+After the Neural Network is trained, we apply SURP
+1. Convert the network to an array (ask Berivan?)
+2. Put the array into the SURP algorithm
+3. Convert the array back to the network. 
+4. ????
+5. Profit! 
+'''
+
