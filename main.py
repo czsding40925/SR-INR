@@ -24,6 +24,9 @@ parser.add_argument("-lss", "--layer_size", help="Layer sizes as list of ints", 
 parser.add_argument("-nl", "--num_layers", help="Number of layers", type=int, default=10)
 parser.add_argument("-w0", "--w0", help="w0 parameter for SIREN model.", type=float, default=30.0)
 parser.add_argument("-w0i", "--w0_initial", help="w0 parameter for first layer of SIREN model.", type=float, default=30.0)
+## For magnitude pruning
+parser.add_argument("-pr", "--prune_ratio", help ="pruning ratio", type = float, default = 0.4)
+parser.add_argument("-ri","--refine_iter", help = "number of refine iterations", type = int, default = 1000)
 
 args = parser.parse_args()
 
@@ -99,12 +102,12 @@ for i in range(min_id, max_id + 1):
         save_image(torch.clamp(img_recon, 0, 1).to('cpu'), args.logdir + f'/fp_reconstruction_{i}.png')
     
     # Extract weights for plotting 
-    all_weights = util.extract_weights(func_rep)
+    # all_weights = util.extract_weights(func_rep)
 
     # Prune Model and refine 
-    func_rep_pruned, masks = util.apply_magnitude_pruning(func_rep, pruning_percent=0.8)
+    func_rep_pruned, masks = util.apply_magnitude_pruning(func_rep, pruning_percent=args.prune_ratio)
     trainer = Trainer(func_rep_pruned, lr=1e-3, sparse_training=True, masks=masks)
-    trainer.train(coordinates, features, num_iters=500)
+    trainer.train(coordinates, features, num_iters=args.refine_iter)
     print(f'Best training psnr: {trainer.best_vals["psnr"]:.2f}')
 
     # Calculate model size. Divide by 8000 to go from bits to kB
@@ -173,7 +176,7 @@ print(f'Half precision, bpp: {results_mean["hp_bpp"]:.2f}, psnr: {results_mean["
 
 
 # Plot Weight Distribution 
-util.plot_weight_dist(all_weights)
+# util.plot_weight_dist(all_weights)
 '''
 After the Neural Network is trained, we apply SURP
 1. Convert the network to an array (ask Berivan?)
