@@ -3,7 +3,9 @@ import torch
 from torch._C import dtype
 from typing import Dict
 import copy 
-
+from scipy.stats import norm, laplace
+import random 
+import matplotlib.pyplot as plt
 
 DTYPE_BIT_SIZE: Dict[dtype, int] = {
     torch.float32: 32,
@@ -103,5 +105,92 @@ def mean(list_):
 
 
 ## TODO: Define Model Pruning 
+def apply_magnitude_pruning(trained_model, pruning_percent=0.2):
+    """
+    Prunes the weights of the trained_model by setting the smallest weights to zero and returns a new pruned model.
+    
+    Args:
+        trained_model: The pre-trained PyTorch model to prune.
+        pruning_percent: The percentage of weights to prune (e.g., 0.2 for 20%).
+
+    Returns:
+        pruned_model: A copy of the trained_model with pruned weights.
+        masks: A dictionary of masks indicating which weights are pruned (0) and which are trainable (1).
+    """
+    # Create a deep copy of the trained model to apply pruning
+    pruned_model = copy.deepcopy(trained_model)
+
+    # Create a list to store all weights across layers and their corresponding masks
+    masks = {}
+
+    # Collect all weights across layers
+    all_weights = []
+
+    for name, param in pruned_model.named_parameters():
+        if 'weight' in name:
+            all_weights.append(param.data.abs().clone().view(-1))  # Flatten the weights to apply pruning
+
+    # Concatenate all weights into a single tensor
+    all_weights = torch.cat(all_weights)
+
+    # Determine the threshold for pruning (the smallest values to zero)
+    threshold = torch.quantile(all_weights, pruning_percent)
+
+    # Prune each layer by zeroing out weights below the threshold and create a mask
+    for name, param in pruned_model.named_parameters():
+        if 'weight' in name:
+            # Create a mask for the weights: 1 for unpruned weights, 0 for pruned weights
+            mask = (param.data.abs() > threshold).float()
+            masks[name] = mask  # Save the mask
+
+            # Zero out the pruned weights
+            param.data.mul_(mask)
+
+    return pruned_model, masks
+
+def extract_weights(model):
+  # Extract Weights
+    all_weights = []
+    for name, param in model.named_parameters():
+      if 'weight' in name and param.requires_grad:
+          weights = param.detach().cpu().numpy()  # Get the weights as a NumPy array
+          all_weights.append(weights.flatten())   # Flatten the weights and store them
+
+    all_weights = np.concatenate(all_weights)
+
+    return all_weights
 
 ## TODO: Weight Distribution Fit (Gaussian and Laplace)
+def plot_weight_dist(all_weights):
+    # Fit a Gaussian distribution to the data
+    mu_gauss, std_gauss = norm.fit(all_weights)
+
+    # Fit a Laplacian distribution to the data
+    mu_laplace, b_laplace = laplace.fit(all_weights)
+
+    # Plot the histogram
+    plt.figure(figsize=(10, 6))
+    plt.hist(all_weights, bins=5000, density=True, color='blue', alpha=0.6, label='Weights Histogram')
+
+    # Create an array of values for the x-axis (for plotting the PDFs)
+    x = np.linspace(-0.05, 0.05, 1000)
+
+    # Plot the Gaussian fit
+    pdf_gauss = norm.pdf(x, mu_gauss, std_gauss)
+    plt.plot(x, pdf_gauss, 'r-', linewidth=2, label='Gaussian fit')
+
+    # Plot the Laplacian fit
+    pdf_laplace = laplace.pdf(x, mu_laplace, b_laplace)
+    plt.plot(x, pdf_laplace, 'g-', linewidth=2, label='Laplacian fit')
+
+    # Add labels and title
+    plt.title("Histogram of Neural Network Weights with Gaussian and Laplacian Fits")
+    plt.xlabel("Weight Value")
+    plt.ylabel("Density")
+    plt.xlim(-0.05, 0.05)
+    plt.legend()
+    plt.grid(True)
+
+    # Show the plot
+    plt.show()
+    print(len(all_weights))

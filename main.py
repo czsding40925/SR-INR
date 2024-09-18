@@ -11,6 +11,7 @@ from torchvision import transforms
 from torchvision.utils import save_image
 from training import Trainer
 
+# TODO: Add sparse model 
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-ld", "--logdir", help="Path to save logs", default=f"/tmp/{getpass.getuser()}")
@@ -41,7 +42,8 @@ else:
     min_id, max_id = args.image_id, args.image_id
 
 # Dictionary to register mean values (both full precision and half precision)
-results = {'fp_bpp': [], 'hp_bpp': [], 'fp_psnr': [], 'hp_psnr': []}
+# results = {'fp_bpp': [], 'hp_bpp': [], 'fp_psnr': [], 'hp_psnr': []}
+results = {'fp_bpp': [], 'fpp_bpp':[], 'hp_bpp': [], 'fp_psnr': [], 'fpp_psnr': [], 'hp_psnr': []}
 
 # Create directory to store experiments
 if not os.path.exists(args.logdir):
@@ -95,6 +97,36 @@ for i in range(min_id, max_id + 1):
     with torch.no_grad():
         img_recon = func_rep(coordinates).reshape(img.shape[1], img.shape[2], 3).permute(2, 0, 1)
         save_image(torch.clamp(img_recon, 0, 1).to('cpu'), args.logdir + f'/fp_reconstruction_{i}.png')
+    
+    # Extract weights for plotting 
+    all_weights = util.extract_weights(func_rep)
+
+    # Prune Model and refine 
+    func_rep_pruned, masks = util.apply_magnitude_pruning(func_rep, pruning_percent=0.8)
+    trainer = Trainer(func_rep_pruned, lr=1e-3, sparse_training=True, masks=masks)
+    trainer.train(coordinates, features, num_iters=500)
+    print(f'Best training psnr: {trainer.best_vals["psnr"]:.2f}')
+
+    # Calculate model size. Divide by 8000 to go from bits to kB
+    model_size = util.model_size_in_bits(func_rep) / 8000.
+    print(f'Model size: {model_size:.1f}kB')
+    fpp_bpp = util.bpp(model=func_rep, image=img)
+    print(f'Full precision pruned bpp: {fpp_bpp:.2f}')
+
+    # Log full precision pruend results
+    results['fpp_bpp'].append(fpp_bpp)
+    results['fpp_psnr'].append(trainer.best_vals['psnr'])
+
+    # Save best model
+    torch.save(trainer.best_model, args.logdir + f'/best_model_{i}.pt')
+
+    # Update current model to be best model
+    func_rep_pruned.load_state_dict(trainer.best_model)
+
+    # Save full precision image reconstruction
+    with torch.no_grad():
+        img_recon = func_rep_pruned(coordinates).reshape(img.shape[1], img.shape[2], 3).permute(2, 0, 1)
+        save_image(torch.clamp(img_recon, 0, 1).to('cpu'), args.logdir + f'/fpp_reconstruction_{i}.png')
 
     # Convert model and coordinates to half precision. Note that half precision
     # torch.sin is only implemented on GPU, so must use cuda
@@ -136,8 +168,12 @@ with open(args.logdir + f'/results_mean.json', 'w') as f:
 
 print('Aggregate results:')
 print(f'Full precision, bpp: {results_mean["fp_bpp"]:.2f}, psnr: {results_mean["fp_psnr"]:.2f}')
+print(f'Full precision, bpp: {results_mean["fpp_bpp"]:.2f}, psnr: {results_mean["fpp_psnr"]:.2f}')
 print(f'Half precision, bpp: {results_mean["hp_bpp"]:.2f}, psnr: {results_mean["hp_psnr"]:.2f}')
 
+
+# Plot Weight Distribution 
+util.plot_weight_dist(all_weights)
 '''
 After the Neural Network is trained, we apply SURP
 1. Convert the network to an array (ask Berivan?)

@@ -5,7 +5,7 @@ from util import get_clamped_psnr
 
 
 class Trainer():
-    def __init__(self, representation, lr=1e-3, print_freq=1):
+    def __init__(self, representation, lr=1e-3, print_freq=1, sparse_training=False, masks=None):
         """Model to learn a representation of a single datapoint.
 
         Args:
@@ -21,8 +21,20 @@ class Trainer():
         self.loss_func = torch.nn.MSELoss()
         self.best_vals = {'psnr': 0.0, 'loss': 1e8}
         self.logs = {'psnr': [], 'loss': []}
+        self.sparse_training = sparse_training
+        self.masks = masks if masks is not None else {}
         # Store parameters of best model (in terms of highest PSNR achieved)
         self.best_model = OrderedDict((k, v.detach().clone()) for k, v in self.representation.state_dict().items())
+    
+    def apply_gradient_masking(self):
+        """
+        Applies gradient masking to ensure pruned weights do not get updated during training.
+        Should be called after loss.backward() and before optimizer.step().
+        """
+        if self.sparse_training and self.masks:
+            for name, param in self.representation.named_parameters():
+                if name in self.masks:
+                    param.grad.mul_(self.masks[name])  # Zero out gradients for pruned weights
 
     def train(self, coordinates, features, num_iters):
         """Fit neural net to image.
@@ -40,6 +52,10 @@ class Trainer():
                 predicted = self.representation(coordinates)
                 loss = self.loss_func(predicted, features)
                 loss.backward()
+                
+                 # Apply gradient masking for sparse training if enabled
+                self.apply_gradient_masking()
+
                 self.optimizer.step()
 
                 # Calculate psnr
@@ -63,6 +79,3 @@ class Trainer():
                     if i > int(num_iters / 2.):
                         for k, v in self.representation.state_dict().items():
                             self.best_model[k].copy_(v)
-
-
-## TODO: implement Trainer_sparse()
