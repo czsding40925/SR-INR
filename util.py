@@ -2,6 +2,7 @@ import numpy as np
 import torch
 from torch._C import dtype
 from typing import Dict
+import copy 
 
 
 DTYPE_BIT_SIZE: Dict[dtype, int] = {
@@ -99,3 +100,8 @@ def get_clamped_psnr(img, img_recon):
 
 def mean(list_):
     return np.mean(list_)
+
+
+## TODO: Define Model Pruning 
+
+## TODO: Weight Distribution Fit (Gaussian and Laplace)

@@ -116,6 +116,7 @@ def SURP(NN, depth, width, beta = 8, L = 10):
 
     # Estimate the lambda value of Laplace distribution for all_weights 
     # Using scipy fits here (verify)
+    # TODO: Change to the estimation method in the paper (mean is one over lambda)
     mu_laplace, lambda_laplace = laplace.fit(all_weights)
 
     # Encoder sends lambda_laplace to the Decoder 
@@ -136,6 +137,7 @@ def SURP(NN, depth, width, beta = 8, L = 10):
     # Denormalize the weights 
     # TODO: how to denormalize in this case? 
     # Convert the sparse array back to an NN
+    # TODO: Ask Berivan how the network weights is converted 
     input_dim = None
     output_dim = None 
     pruned_NN = array_to_fully_connected_nn(U, input_dim, width, output_dim, depth)

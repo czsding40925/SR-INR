@@ -63,3 +63,6 @@ class Trainer():
                     if i > int(num_iters / 2.):
                         for k, v in self.representation.state_dict().items():
                             self.best_model[k].copy_(v)
+
+
+## TODO: implement Trainer_sparse()
