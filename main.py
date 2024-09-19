@@ -30,6 +30,7 @@ parser.add_argument("-pr", "--prune_ratio", help ="pruning ratio", type = float,
 parser.add_argument("-ri","--refine_iter", help = "number of refine iterations", type = int, default = 1000)
 ## For loading trained model? 
 
+
 args = parser.parse_args()
 
 # Set up torch and cuda
@@ -181,7 +182,7 @@ print(f'Half precision, bpp: {results_mean["hp_bpp"]:.2f}, psnr: {results_mean["
 # Plot Weight Distribution 
 # util.plot_weight_dist(all_weights)
 
-# TODO: Implement SuRP 
+# TODO: Implement SuRP (Changed: will implement in sr.py)
 # SR_INR = surp(func_rep, beta = 1, total_iter=1000, width = args.layer_size, depth = args.layer_depth)
 # SR_INR.successive_refine()
 
