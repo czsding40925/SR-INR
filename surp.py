@@ -12,133 +12,130 @@ import torch.nn as nn
 import numpy as np 
 from scipy.stats import norm, laplace
 import random 
+from siren import Siren 
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-def l1_normalize(weights):
-    """
-    Perform L1 normalization on the given weights.
-    """
-    l1_norm = torch.norm(weights, p=1, dim=1, keepdim=True)
-    normalized_weights = weights / (l1_norm + 1e-6)  # Adding a small value to prevent division by zero
-    return normalized_weights
+class surp():
+    def __init__(self, model, beta, total_iter, width, depth, checkpoint_path):
+        """
+        Applying the SuRP algorithm to a given NN
 
-def apply_l1_normalization_to_model(model):
-    """
-    Apply L1 normalization to the weights of all linear layers in the model.
-    """
-    for name, param in model.named_parameters():
-        if 'weight' in name:
-            with torch.no_grad():
-                normalized_weight = l1_normalize(param.data)
-                param.data.copy_(normalized_weight)
+        Args: 
+            model: the trained NN to be refined 
+        """
+        self.model = model.to(device)
+        self.beta = beta
+        self.total_iter = total_iter # L in the paper 
+        self.width = width  # from argparser
+        self.depth = depth # from argparser 
+        self.checkpoint_path = checkpoint_path
 
-# TODO: Change ReLU to SIREN activation  
-def array_to_fully_connected_nn(array, input_dim, layer_width, output_dim, depth):
-    # Calculate the total number of parameters needed for each layer
-    current_index = 0
-    layers = []
-    
-    # Input to first hidden layer
-    weight_shape = (layer_width, input_dim)
-    weight_size = weight_shape[0] * weight_shape[1]
-    weights = array[current_index:current_index + weight_size].reshape(weight_shape)
-    current_index += weight_size
-    
-    bias_shape = (layer_width,)
-    bias_size = bias_shape[0]
-    biases = array[current_index:current_index + bias_size]
-    current_index += bias_size
-    
-    fc1 = nn.Linear(input_dim, layer_width)
-    with torch.no_grad():
-        fc1.weight.copy_(torch.tensor(weights))
-        fc1.bias.copy_(torch.tensor(biases))
-    layers.append(fc1)
-    layers.append(nn.ReLU())  # Assuming ReLU activation
-
-    # Hidden layers
-    for _ in range(depth - 1):
-        weight_shape = (layer_width, layer_width)
-        weight_size = weight_shape[0] * weight_shape[1]
-        weights = array[current_index:current_index + weight_size].reshape(weight_shape)
-        current_index += weight_size
-        
-        bias_shape = (layer_width,)
-        bias_size = bias_shape[0]
-        biases = array[current_index:current_index + bias_size]
-        current_index += bias_size
-        
-        fc = nn.Linear(layer_width, layer_width)
+    # TODO: Implement Get NN weight method 
+    def get_nn_weights(self):
+        '''
+        Modified from SuRP reconstruct 
+        '''
+        param_d = {}
         with torch.no_grad():
-            fc.weight.copy_(torch.tensor(weights))
-            fc.bias.copy_(torch.tensor(biases))
-        layers.append(fc)
-        layers.append(nn.ReLU())
 
-    # Last hidden layer to output
-    weight_shape = (output_dim, layer_width)
-    weight_size = weight_shape[0] * weight_shape[1]
-    weights = array[current_index:current_index + weight_size].reshape(weight_shape)
-    current_index += weight_size
+            self.model.load_checkpoint
+            # model.load_state_dict() check 
+            
+            self.model.eval()
+            
+        
+    def l1_normalize(self, weights):
+        """
+        Perform L1 normalization on the given weights.
+        """
+        l1_norm = torch.norm(weights, p=1, dim=1, keepdim=True)
+        normalized_weights = weights / (l1_norm + 1e-6)  # Adding a small value to prevent division by zero
+        return normalized_weights
+
+    def apply_l1_normalization_to_model(self):
+        """
+        Apply L1 normalization to the weights of all linear layers in the model.
+        """
+        for name, param in self.model.named_parameters():
+            if 'weight' in name:
+                with torch.no_grad():
+                    # Normalize the weights of each layer using L1 normalization
+                    normalized_weight = self.l1_normalize(param.data)
+                    param.data.copy_(normalized_weight)
+
+    def concat_weights(self):
+        # Concatenate weights 
+        all_weights = [] 
+        for name, param in self.model.named_parameters():
+            if 'weight' in name and param.requires_grad:
+                weights = param.detach().cpu().numpy()  # Get the weights as a NumPy array
+                all_weights.append(weights.flatten())   # Flatten the weights and store them
+
+        all_weights = np.concatenate(all_weights)
+        return all_weights 
     
-    bias_shape = (output_dim,)
-    bias_size = bias_shape[0]
-    biases = array[current_index:current_index + bias_size]
-    current_index += bias_size
     
-    fc_output = nn.Linear(layer_width, output_dim)
-    with torch.no_grad():
-        fc_output.weight.copy_(torch.tensor(weights))
-        fc_output.bias.copy_(torch.tensor(biases))
-    layers.append(fc_output)
+    # Algorithm 1 of the SuRP paper 
+    def successive_refine(self):
+        # Normalization by Layer 
+        self.apply_l1_normalization_to_model()
+        
+        # Get all weights as a list 
+        all_weights = self.concat_weights()
 
-    # Create the final model
-    model = nn.Sequential(*layers)
-    return model
+        # Initialize the U vector for successive refinement
+        n = len(all_weights)
+        U = np.copy(all_weights)
+        U_recon = np.zeros(n)
 
+        # First estimation of Lambda (mean = 1/ Lambda)
+        lambda_laplace = 1/np.mean(np.abs(all_weights))
 
-# TODO: ask/find out what beta is 
-def SURP(NN, depth, width, beta = 8, L = 10):
-    # Normalization by Layer 
-    apply_l1_normalization_to_model(NN)
-    
-    # Convert the Normalized NN to an array (all_weights)
-    all_weights = []
-    for name, param in NN.named_parameters():
-        if 'weight' in name and param.requires_grad:
-          weights = param.detach().cpu().numpy()  # Get the weights as a NumPy array
-          all_weights.append(weights.flatten())   # Flatten the weights and store them
+        # Iteratively refine
+        for i in range(self.total_iter):
+            thresh = (1 / lambda_laplace) * np.log(n/2*self.beta)
 
-    all_weights = np.concatenate(all_weights)
+            # Find indices 
+            m_max = np.where(U > thresh)
+            m_min = np.where(U < -thresh)
+            # Handle the empty case 
+            if len(m_max) == 0 or len(m_min)==0:
+                lambda_laplace = 1/np.mean(all_weights)
+                # continue 
+            m_plus = random.choice(m_max)
+            m_minus = random.choice(m_min)
+            U[m_plus] -= (1 / lambda_laplace) * np.log(n/2*self.beta)
+            U[m_minus] += (1 / lambda_laplace) * np.log(n/2*self.beta)
+            lambda_laplace *= n/(n-2 * np.log(n/self.beta)) 
 
-    # Initialize the U vector for successive refinement
-    n = len(all_weights)
-    U = np.zeros(n)
+            # Decoder 
+            U_recon[m_plus] += thresh 
+            U_recon[m_minus] -= thresh 
 
-    # Estimate the lambda value of Laplace distribution for all_weights 
-    # Using scipy fits here (verify)
-    # TODO: Change to the estimation method in the paper (mean is one over lambda)
-    mu_laplace, lambda_laplace = laplace.fit(all_weights)
+        # Return 
+        # Denormalize the weights 
+        # all_weights_refined = U * np.sum(np.abs(all_weights))
 
-    # Encoder sends lambda_laplace to the Decoder 
-    for i in range(L):
-        thresh = (1 / lambda_laplace) * np.log(n/beta)
+        """
+        # Encoder sends lambda_laplace to the Decoder 
+        for i in range(L):
+            thresh = (1 / lambda_laplace) * np.log(n/beta)
 
-        # Find indices 
-        m_inds = np.where(all_weights > thresh)
-        # Handle the empty case 
-        if len(m_inds) > 0:
-            m = random.choice(m_inds)
-            all_weights[m] -= thresh 
-            lambda_laplace *= n/(n-np.log(n/beta)) 
-            U[m] += thresh 
-        else: 
-            lambda_laplace *= n/(n-np.log(n/beta)) 
+            # Find indices 
+            m_inds = np.where(all_weights > thresh)
+            # Handle the empty case 
+            if len(m_inds) > 0:
+                m = random.choice(m_inds)
+                all_weights[m] -= thresh 
+                lambda_laplace *= n/(n-np.log(n/beta)) 
+                U[m] += thresh 
+            else: 
+                lambda_laplace *= n/(n-np.log(n/beta)) 
 
-    # Denormalize the weights 
-    # TODO: how to denormalize in this case? 
-    # Convert the sparse array back to an NN
-    # TODO: Ask Berivan how the network weights is converted 
-    input_dim = None
-    output_dim = None 
-    pruned_NN = array_to_fully_connected_nn(U, input_dim, width, output_dim, depth)
-    return pruned_NN
+        # Denormalize the weights 
+        # TODO: how to denormalize in this case? 
+        # Convert the sparse array back to an NN
+        # TODO: Ask Berivan how the network weights is converted 
+        pruned_NN = None 
+        return pruned_NN
+        """

@@ -6,6 +6,7 @@ import os
 import random
 import torch
 import util
+import surp 
 from siren import Siren
 from torchvision import transforms
 from torchvision.utils import save_image
@@ -27,6 +28,7 @@ parser.add_argument("-w0i", "--w0_initial", help="w0 parameter for first layer o
 ## For magnitude pruning
 parser.add_argument("-pr", "--prune_ratio", help ="pruning ratio", type = float, default = 0.4)
 parser.add_argument("-ri","--refine_iter", help = "number of refine iterations", type = int, default = 1000)
+## For loading trained model? 
 
 args = parser.parse_args()
 
@@ -46,7 +48,8 @@ else:
 
 # Dictionary to register mean values (both full precision and half precision)
 # results = {'fp_bpp': [], 'hp_bpp': [], 'fp_psnr': [], 'hp_psnr': []}
-results = {'fp_bpp': [], 'fpp_bpp':[], 'hp_bpp': [], 'fp_psnr': [], 'fpp_psnr': [], 'hp_psnr': []}
+results = {'fp_bpp': [], 'fpp_bpp':[], 'hp_bpp': [], 
+           'fp_psnr': [], 'fpp_psnr': [], 'hp_psnr': []}
 
 # Create directory to store experiments
 if not os.path.exists(args.logdir):
@@ -121,7 +124,7 @@ for i in range(min_id, max_id + 1):
     results['fpp_psnr'].append(trainer.best_vals['psnr'])
 
     # Save best model
-    torch.save(trainer.best_model, args.logdir + f'/best_model_{i}.pt')
+    torch.save(trainer.best_model, args.logdir + f'/best_pruned_model_{i}.pt')
 
     # Update current model to be best model
     func_rep_pruned.load_state_dict(trainer.best_model)
@@ -177,12 +180,9 @@ print(f'Half precision, bpp: {results_mean["hp_bpp"]:.2f}, psnr: {results_mean["
 
 # Plot Weight Distribution 
 # util.plot_weight_dist(all_weights)
-'''
-After the Neural Network is trained, we apply SURP
-1. Convert the network to an array (ask Berivan?)
-2. Put the array into the SURP algorithm
-3. Convert the array back to the network. 
-4. ????
-5. Profit! 
-'''
+
+# TODO: Implement SuRP 
+# SR_INR = surp(func_rep, beta = 1, total_iter=1000, width = args.layer_size, depth = args.layer_depth)
+# SR_INR.successive_refine()
+
 
