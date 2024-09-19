@@ -170,7 +170,7 @@ def plot_weight_dist(all_weights):
 
     # Plot the histogram
     plt.figure(figsize=(10, 6))
-    plt.hist(all_weights, bins=5000, density=True, color='blue', alpha=0.6, label='Weights Histogram')
+    plt.hist(all_weights, bins=2000, density=True, color='blue', alpha=0.6, label='Weights Histogram')
 
     # Create an array of values for the x-axis (for plotting the PDFs)
     x = np.linspace(-0.05, 0.05, 1000)
@@ -194,3 +194,4 @@ def plot_weight_dist(all_weights):
     # Show the plot
     plt.show()
     print(len(all_weights))
+    plt.savefig()
