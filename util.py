@@ -194,4 +194,4 @@ def plot_weight_dist(all_weights):
     # Show the plot
     plt.show()
     print(len(all_weights))
-    plt.savefig()
+    plt.savefig('weight_plot_histogram.png')
