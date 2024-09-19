@@ -44,7 +44,8 @@ SR_INR = surp(func_rep, beta = 1,
               width = args.layer_size, 
               depth = args.num_layers, 
               checkpoint_path = args.logdir)
-model, params, param_d, params_abs, signs, norms, lam_inv, checkpoint = SR_INR.get_nn_weights()
+
+model, params, param_d, params_abs, signs, norms, lam_inv, checkpoint = SR_INR.get_nn_weights(func_rep, args.logdir)
 
 ## Try to plot a NN weights histogram 
 util.plot_weight_dist(params)
