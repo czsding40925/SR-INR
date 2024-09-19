@@ -16,59 +16,81 @@ from siren import Siren
 from copy import deepcopy
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-class surp():
+class surp:
     def __init__(self, model, beta, total_iter, width, depth, checkpoint_path):
         """
-        Applying the SuRP algorithm to a given NN
+        Applying the SuRP algorithm to a given Neural Network (NN).
 
-        Args: 
-            model: the trained NN to be refined 
+        Args:
+            model: The trained neural network model to be refined.
+            beta (float): SuRP hyperparameter controlling sparsity.
+            total_iter (int): Total number of iterations for the SuRP refinement.
+            width (int): Width of the network (from argparser).
+            depth (int): Depth of the network (from argparser).
+            checkpoint_path (str): Path to the checkpoint file containing the model weights.
         """
-        self.model = model.to(device)
+        # Get network weights and related parameters
+        self.model, self.params, self.param_d, self.params_abs, self.signs, self.norms, self.lam_inv, self.checkpoint = self.get_nn_weights(model, checkpoint_path)
+        
+        # Assigning arguments to instance variables
         self.beta = beta
-        self.total_iter = total_iter # L in the paper 
-        self.width = width  # from argparser
-        self.depth = depth # from argparser 
-        self.checkpoint_path = checkpoint_path
+        self.total_iter = total_iter  # Total number of iterations (L in the paper)
+        self.width = width  # Network width from argparser
+        self.depth = depth  # Network depth from argparser
+        self.checkpoint_path = checkpoint_path  # Path to the checkpoint file
 
-    # TODO: Implement Get NN weight method 
-    def get_nn_weights(self):
-        '''
-        Modified from SuRP reconstruct 
-        '''
+    # Implement the get_nn_weights method
+    def get_nn_weights(self, model, checkpoint_path):
+        """
+        Retrieves and processes the weights of the given neural network model.
+
+        Args:
+            model: The neural network model.
+            checkpoint_path (str): Path to the checkpoint file containing the model weights.
+
+        Returns:
+            tuple: Contains the model, parameters, parameter dictionary, 
+                   absolute parameters, signs, norms, lambda inverse, and checkpoint.
+        """
         param_d = {}
         with torch.no_grad():
+            # Load the checkpoint
+            checkpoint = torch.load(checkpoint_path)
+            model.load_state_dict(checkpoint)
 
-            checkpoint = torch.load(self.checkpoint_path)
-            self.model.load_state_dict(checkpoint['state_dict'])
-
-            # grab weights
-            self.model.eval()
+            # Prepare to collect model parameters
+            model.eval()
             params = []
             norms = []
             print('Target network weights:')
-            for (name, p) in self.model.named_parameters():
+            
+            for (name, p) in model.named_parameters():
                 if p.requires_grad:
                     weights = deepcopy(p.view(-1))
-                    norms.append(torch.norm(weights) * torch.ones_like(weights))
-                    weights = weights / torch.norm(weights) # normalize 
-                    # NOTE: let's squeeze everything together
+                    norm = torch.norm(weights)
+                    norms.append(norm * torch.ones_like(weights))
+                    weights = weights / norm  # Normalize the weights
+                    
+                    # Collect parameters and their dimensions
                     params.append(weights)
-                    print('{}: {}'.format(name, p.size()))
                     param_d[name] = p.size()
-            # TODO: this may run out of memory if not careful
+                    print(f'{name}: {p.size()}')
+
+            # Concatenate all the parameters and norms
             params = torch.cat(params)
             norms = torch.cat(norms)
-            #Save sign of the weights
-            signs = torch.sign(params).float().cuda()
+
+            # Save sign and absolute values of weights
+            signs = torch.sign(params).float().cuda()  # Convert to float and move to GPU
             params_abs = torch.abs(params)
-            # compute mean of weight magnitudes
+            
+            # Compute the mean of weight magnitudes
             lam_inv = torch.mean(params_abs)
-            print('Mean of the magnitudes is: {}'.format(lam_inv))
+            print(f'Mean of the magnitudes is: {lam_inv}')
 
-        print('Total target network params: {}\n'.format(len(params)))
+        print(f'Total target network params: {len(params)}\n')
 
-        return params, param_d, params_abs, signs, norms, lam_inv
+        return model, params, param_d, params_abs, signs, norms, lam_inv, checkpoint
 
 
 
