@@ -6,18 +6,26 @@ We use algorithm 2.
 Hyperparameters: beta 
 Input: NN from COIN 
 Output: Pruned NN (Tensor) 
+
+Some notes: 
+-- We always normalize 
 '''
 import torch 
 import torch.nn as nn
 import numpy as np 
-from scipy.stats import norm, laplace
+from scipy.stats import norm, laplace, geom
 import random 
 from siren import Siren 
-from copy import deepcopy
+from copy import deepcopy 
+import util 
+from torchvision import transforms
+from torchvision.utils import save_image
+import imageio 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
+# Might want to define dtype = torch.float32
 
 class surp:
-    def __init__(self, model, beta, total_iter, width, depth, checkpoint_path):
+    def __init__(self, model, beta, total_iter, width, depth, checkpoint_path, image_path):
         """
         Applying the SuRP algorithm to a given Neural Network (NN).
 
@@ -29,15 +37,35 @@ class surp:
             depth (int): Depth of the network (from argparser).
             checkpoint_path (str): Path to the checkpoint file containing the model weights.
         """
-        # Get network weights and related parameters
-        self.model, self.params, self.param_d, self.params_abs, self.signs, self.norms, self.lam_inv, self.checkpoint = self.get_nn_weights(model, checkpoint_path)
-        
+        # Get network weights and related parameters for SuRP
+        model, params, param_d, params_abs, signs, norms, lam_inv, checkpoint = self.get_nn_weights(model, checkpoint_path)
+        img = imageio.imread(image_path)
+        coordinates, features = util.to_coordinates_and_features(img)
+        self.model = model 
+        self.nn_params = params
+        self.param_d = param_d 
+        self.params_abs = deepcopy(params_abs) 
+        self.params_res = deepcopy(params_abs) # What does res stand for? 
+        self.params_abs_recon = torch.zeros_like(params_abs)
+        self.signs = signs 
+        self.norms = norms
+        self.lam_inv = lam_inv
+        self.state_dict = checkpoint
+        self.n = len(params_abs)
+        self.alpha = None # Verify is this beta? 
+        self.scale_factor = np.log(float(self.n)/float(np.log(self.n)))
+        self.alpha = self.alpha / self.scale_factor
+        self.lam_inv = self.alpha * self.lam_inv
+        self.gamma = None 
+        # self.pruning = pruning
         # Assigning arguments to instance variables
         self.beta = beta
         self.total_iter = total_iter  # Total number of iterations (L in the paper)
         self.width = width  # Network width from argparser
         self.depth = depth  # Network depth from argparser
         self.checkpoint_path = checkpoint_path  # Path to the checkpoint file
+        self.img = transforms.ToTensor(img).float().to(device, torch.float32)
+        self.coordinates, self.features = coordinates.to(device, torch.float32), features.to(device, torch.float32)
 
     # Implement the get_nn_weights method
     def get_nn_weights(self, model, checkpoint_path):
@@ -93,101 +121,77 @@ class surp:
         return model, params, param_d, params_abs, signs, norms, lam_inv, checkpoint
 
 
+    def enc_step(self):
+        param_list = self.params_res
+        lambda_inv = self.lam_inv
+        m_inds = torch.nonzero(param_list.gt(lambda_inv*self.scale_factor))
 
+        if len(m_inds) == 0:
+            print('no such index')
+            return None, None
+        else:
+            m = np.random.choice(m_inds.detach().cpu().numpy().reshape(len(m_inds)))
+            geom_rv = geom(float(len(m_inds))/float(len(param_list)))  # Declare a geometric random variable
+            k = geom_rv.rvs()  # Get a random sample from geom_rv, k to be used for bitrate estimates. TODO: Ask
 
-    # def l1_normalize(self, weights):
-    #     """
-    #     Perform L1 normalization on the given weights.
-    #     """
-    #     l1_norm = torch.norm(weights, p=1, dim=1, keepdim=True)
-    #     normalized_weights = weights / (l1_norm + 1e-6)  # Adding a small value to prevent division by zero
-    #     return normalized_weights
+            # Update \hat{U}:
+            self.params_abs_recon[m] = self.params_abs_recon[m] + self.lam_inv*self.scale_factor
+            # Update U:
+            self.params_res[m] = self.params_res[m] - self.lam_inv*self.scale_factor
+            return m, k
 
-    # def apply_l1_normalization_to_model(self):
-    #     """
-    #     Apply L1 normalization to the weights of all linear layers in the model.
-    #     """
-    #     for name, param in self.model.named_parameters():
-    #         if 'weight' in name:
-    #             with torch.no_grad():
-    #                 # Normalize the weights of each layer using L1 normalization
-    #                 normalized_weight = self.l1_normalize(param.data)
-    #                 param.data.copy_(normalized_weight)
+    def load_reconst_weights(self, w_hat):
+        i = 0
+        w_hat = w_hat*self.signs
+        w_hat = w_hat*self.norms
+        new_state_dict = deepcopy(self.nn_state_d)
+        for k, k_shape in self.param_d.items():
+            k_size = k_shape.numel()
+            new_state_dict[k] = w_hat[i:(i + k_size)].view(k_shape)
+            i += k_size
+        self.model.load_state_dict(new_state_dict)
 
-    # def concat_weights(self):
-    #     # Concatenate weights 
-    #     all_weights = [] 
-    #     for name, param in self.model.named_parameters():
-    #         if 'weight' in name and param.requires_grad:
-    #             weights = param.detach().cpu().numpy()  # Get the weights as a NumPy array
-    #             all_weights.append(weights.flatten())   # Flatten the weights and store them
+    ## TODO: Ask what alpha/beta/gamma are 
+    def successive_refine(self):
+        refresh_count = 0 # handling the empty list of indices scenario 
+        for i in range(self.total_iter):
+            m, k = self.enc_step()
+            while m is None:
+                refresh_count += 1
+                if refresh_count % 20 == 0 and refresh_count>1:
+                    self.alpha =  self.alpha*0.9
+                # Refresh the parameter lambda.
+                self.lam_inv = torch.mean(self.params_res)
+                self.lam_inv = self.alpha * self.lam_inv
+                # Compute m, k again after the parameter lambda is refreshed.
+                m, k = self.enc_step()
+            
+            # for every 100 iterations, reconstruct an image and compute PSNR
+            if i % 100 == 0: 
 
-    #     all_weights = np.concatenate(all_weights)
-    #     return all_weights 
-    
-    
-    # # Algorithm 1 of the SuRP paper 
-    # def successive_refine(self):
-    #     # Normalization by Layer 
-    #     self.apply_l1_normalization_to_model()
+                w_hat = deepcopy(self.params_abs_recon)
+                self.load_reconst_weights(w_hat)           
+                self.synthesize_image(w_hat)
+
+            # Update Gamma and Lambda 
+            self.gamma = (self.n - 1)/(self.n - self.scale_factor)
+            self.lam_inv = self.gamma*(self.n - self.scale_factor) / self.n * self.lam_inv
+
+    def synthesize_image(self, w_hat):
+        '''
+        This will take the SURP network and reconstruct the image. It also computes PSNR
+        '''
+
+        # Image Reconstruction 
+        with torch.no_grad():
+            img_recon = self.model(self.coordinates).reshape(self.img.shape[1], self.img.shape[2], 3).permute(2, 0, 1)
+            save_image(torch.clamp(img_recon, 0, 1).to('cpu'), 'test') # define path
+
+        # Compute PSNR 
+        psnr = util.get_clamped_psnr(img_recon, self.features) 
+        print("PSNR:", psnr)
         
-    #     # Get all weights as a list 
-    #     all_weights = self.concat_weights()
-
-    #     # Initialize the U vector for successive refinement
-    #     n = len(all_weights)
-    #     U = np.copy(all_weights)
-    #     U_recon = np.zeros(n)
-
-    #     # First estimation of Lambda (mean = 1/ Lambda)
-    #     lambda_laplace = 1/np.mean(np.abs(all_weights))
-
-    #     # Iteratively refine
-    #     for i in range(self.total_iter):
-    #         thresh = (1 / lambda_laplace) * np.log(n/2*self.beta)
-
-    #         # Find indices 
-    #         m_max = np.where(U > thresh)
-    #         m_min = np.where(U < -thresh)
-    #         # Handle the empty case 
-    #         if len(m_max) == 0 or len(m_min)==0:
-    #             lambda_laplace = 1/np.mean(all_weights)
-    #             # continue 
-    #         m_plus = random.choice(m_max)
-    #         m_minus = random.choice(m_min)
-    #         U[m_plus] -= (1 / lambda_laplace) * np.log(n/2*self.beta)
-    #         U[m_minus] += (1 / lambda_laplace) * np.log(n/2*self.beta)
-    #         lambda_laplace *= n/(n-2 * np.log(n/self.beta)) 
-
-    #         # Decoder 
-    #         U_recon[m_plus] += thresh 
-    #         U_recon[m_minus] -= thresh 
-
-    #     # Return 
-    #     # Denormalize the weights 
-    #     # all_weights_refined = U * np.sum(np.abs(all_weights))
-
-    #     """
-    #     # Encoder sends lambda_laplace to the Decoder 
-    #     for i in range(L):
-    #         thresh = (1 / lambda_laplace) * np.log(n/beta)
-
-    #         # Find indices 
-    #         m_inds = np.where(all_weights > thresh)
-    #         # Handle the empty case 
-    #         if len(m_inds) > 0:
-    #             m = random.choice(m_inds)
-    #             all_weights[m] -= thresh 
-    #             lambda_laplace *= n/(n-np.log(n/beta)) 
-    #             U[m] += thresh 
-    #         else: 
-    #             lambda_laplace *= n/(n-np.log(n/beta)) 
-
-    #     # Denormalize the weights 
-    #     # TODO: how to denormalize in this case? 
-    #     # Convert the sparse array back to an NN
-    #     # TODO: Ask Berivan how the network weights is converted 
-    #     pruned_NN = None 
-    #     return pruned_NN
+        # Compute sparsity:
+        sparsity = torch.sum(w_hat == 0).item()/w_hat.numel()
+        print("Sparsity:", sparsity)
     
-    # """
