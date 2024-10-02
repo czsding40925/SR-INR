@@ -12,7 +12,7 @@ To quantize a trained model, run
 ```bash
 python compress.py --image_id 8 --compression_type Quantization 
 ``` 
-Note that only half-precision model is supported right now. Other quantization methods TBD.\\
+Note that only half-precision model is supported right now. Other quantization methods TBD. \\
 
 To apply magnitude pruning to a model, run
 ```bash
