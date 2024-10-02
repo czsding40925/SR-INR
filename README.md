@@ -1,4 +1,4 @@
-# SR-INR
+# SR-INR (UNDER CONSTRUCTION AND TESTING)
 
 ## Code for Successive Refinement for Implicit Neural Representation (SR-INR)
 
