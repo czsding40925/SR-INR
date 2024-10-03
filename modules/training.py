@@ -1,7 +1,7 @@
 import torch
 import tqdm
 from collections import OrderedDict
-from util import get_clamped_psnr
+from modules.util import get_clamped_psnr
 
 
 class Trainer():

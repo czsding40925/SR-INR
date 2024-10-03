@@ -6,6 +6,8 @@ import copy
 from scipy.stats import norm, laplace
 import random 
 import matplotlib.pyplot as plt
+import os
+import imageio 
 
 DTYPE_BIT_SIZE: Dict[dtype, int] = {
     torch.float32: 32,
@@ -195,3 +197,35 @@ def plot_weight_dist(all_weights):
     plt.show()
     print(len(all_weights))
     plt.savefig('weight_plot_histogram.png')
+
+
+## For fun: Turn the generated images into GIFs.
+
+def create_gif_from_images(image_folder, output_gif, fps=5):
+    """
+    Create a GIF from a series of images in a folder.
+
+    Args:
+        image_folder (str): The path to the folder containing images.
+        output_gif (str): The output path and filename for the GIF.
+        fps (int): Frames per second (speed of the GIF).
+    """
+    # Get a sorted list of all images in the directory
+    image_files = sorted([f for f in os.listdir(image_folder) if f.startswith('test') and f.endswith('.png')],
+                         key=lambda x: int(x.replace('test', '').replace('.png', '')))
+    
+    # Check if there are images to process
+    if not image_files:
+        print("No images found in the directory!")
+        return
+    
+    # Read and store images
+    images = []
+    for filename in image_files:
+        filepath = os.path.join(image_folder, filename)
+        images.append(imageio.imread(filepath))
+
+    # Save images as a GIF
+    imageio.mimsave(output_gif, images, fps=fps)
+    print(f"GIF saved at {output_gif}")
+

@@ -1,15 +1,12 @@
 '''
-Successive Refinement Algorithm 
-Adoped from SuRP by Isik et al. (2022)
-After a model is trained, we apply the SURP algorithm to the model 
-We use algorithm 2. 
-Hyperparameters: beta 
-Input: NN from COIN 
-Output: Pruned NN (Tensor) 
+This model compression script contains three post-training compression method
+1. Pruning
+2. SuRP
+3. Quantization
 
-Some notes: 
--- We always normalize 
+It contains a base class and then three separate classes of those methods. 
 '''
+
 import torch 
 import torch.nn as nn
 import numpy as np 
@@ -24,88 +21,118 @@ import imageio
 import matplotlib.pyplot as plt
 import os
 import tqdm
+from modules.training import Trainer 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 dtype = torch.float32
-# Define the image save path
-# image_save_path = "results/sr_images"
 
-# Ensure that the directory exists
-#if not os.path.exists(image_save_path):
-    # os.makedirs(image_save_path)
-# Might want to define dtype = torch.float32
+class base_model:
+    def __init__(self, model, image_id, compression_type, width, depth):
+        self.image_id = image_id 
+        self.state_dict = torch.load(self.get_model_path)
+        self.model = model.load_state_dict(self.state_dict)
+        self.compression_type = compression_type
+        self.width = width # layer size
+        self.depth = depth # lazyer depth 
+        self.img = self.load_image()
+        coordinates, features = util.to_coordinates_and_features(self.img)
+        self.coordinates, self.features = coordinates.to(device, dtype), features.to(device, dtype)
+        self.image_save_path = self.get_save_path()
+        
+    def load_image(self):
+        img = imageio.imread(f"kodak-dataset/kodim{str(self.image_id).zfill(2)}.png")
+        img = transforms.ToTensor()(img).float().to(device, dtype)
+        return img 
+    
+    def get_model_path(self):
+        model_path = f"results/image_{self.image_id}/best_model_{self.image_id}"
+        return model_path
 
-class surp:
-    def __init__(self, model, total_iter, image_iter, width, depth, checkpoint_path, image_path, image_save_path):
-        """
-        Applying the SuRP algorithm to a given Neural Network (NN).
+    def get_save_path(self):
+        if self.compression_type != 'SuRP':
+            path = f"results/image_{self.image_id}"
+        else:
+            path = f"results/image_{self.image_id}/SuRP"
+        if not os.path.exists(path):
+            os.makedirs(path)
+        return path 
+    
+    def synthesize_image(self, iter = None):
+        # type full_precision/sr/quantized/pruned
+        with torch.no_grad:
+            img_recon = self.model(self.coordinates).reshape(self.img.shape[1], self.img.shape[2], 3).permute(2, 0, 1)
+            if iter is None: 
+                save_image(torch.clamp(img_recon, 0, 1).to('cpu'), self.image_save_path + f'/{self.compression_type}_reconstruction_{self.image_id}.png')
+            else: 
+                # to handle successive refinement iteration case 
+                save_image(torch.clamp(img_recon, 0, 1).to('cpu'), self.image_save_path + f'/{self.compression_type}_reconstruction_{self.image_id}_{iter}.png')
+            print(f"Image Saved at {self.image_save_path}/{type}_reconstruction_{self.image_id}.png" )
+        psnr = util.get_clamped_psnr(self.img, img_recon)
+        return img_recon, psnr  
+    
+    def save_model(self):
+        path = self.image_save_path+f'{self.compression_type}_model_{self.image_id}'
+        torch.save(self.model, path)
+        print(f"Model saved at {path}")
 
-        Args:
-            model: The trained neural network model to be refined.
-            beta (float): SuRP hyperparameter controlling sparsity.
-            total_iter (int): Total number of iterations for the SuRP refinement.
-            width (int): Width of the network (from argparser).
-            depth (int): Depth of the network (from argparser).
-            checkpoint_path (str): Path to the checkpoint file containing the model weights.
-        """
-        # Get network weights and related parameters for SuRP
-        model, params, param_d, params_abs, signs, norms, lam_inv, state_d = self.get_nn_weights(model, checkpoint_path)
-        self.model = model 
-        self.nn_params = params
-        self.param_d = param_d 
+
+class pruning(base_model):
+    def __init__(self, model, image_id, compression_type, width, depth, pruning_ratio, refine_iter):
+        super.__init__(model, image_id, compression_type, width, depth)
+        self.pruning_percent = pruning_ratio
+        self.refine_iter = refine_iter
+    
+    def prune(self):
+        self.model, masks = util.apply_magnitude_pruning(self.model, pruning_percent=self.pruning_ratio)
+        trainer = Trainer(self.model, lr=1e-3, sparse_training=True, masks=masks)
+        trainer.train(self.coordinates, self.features, num_iters=self.refine_iter)
+        self.save_model()
+        psnr = self.synthesize_image()
+        print("PSNR:", psnr)
+
+
+class quantization(base_model):
+    def __init__(self, model, image_id, compression_type, width, depth, quantization_mode):
+        super.__init__(model, image_id, compression_type, width, depth)
+        self.quantization_mode = quantization_mode
+
+    def quantize(self):
+        if self.quantization_mode == 0.5:
+            self.model.half().to(device)
+        self.save_model()
+        psnr = self.synthesize_image()
+        print("PSNR:", psnr)
+
+
+class surp(base_model):
+    def __init__(self, model, image_id, compression_type, width, depth, total_iter, img_iter):
+        super.__init__(model, image_id, compression_type, width, depth)
+        self.params, self.param_d, params_abs, self.signs, self.norms, self.lam_inv = self.get_nn_weights()
         self.params_abs = deepcopy(params_abs) 
         self.params_res = deepcopy(params_abs) # What does res stand for? 
         self.params_abs_recon = torch.zeros_like(params_abs)
-        self.signs = signs 
-        self.norms = norms
-        self.lam_inv = lam_inv
-        self.nn_state_dict = state_d
-        self.n = len(params_abs)
-        self.alpha = 10 # From the config files (resnet). What is this?  
+        self.total_iter = total_iter # Total number of iterations (L in the paper)
+        self.img_iter = img_iter # Generate image per 
+        self.n = len(self.param_abs)
         self.scale_factor = np.log(float(self.n)/float(np.log(self.n)))
-        self.alpha = self.alpha / self.scale_factor
+        self.alpha = 10 / self.scale_factor # might change 10 to others
         self.lam_inv = self.alpha * self.lam_inv
         self.gamma = 1 # From the config files (resnet/vgg). What is this? 
-        # self.pruning = pruning
-        # Assigning arguments to instance variables
-        # self.beta = beta
-        self.total_iter = total_iter  # Total number of iterations (L in the paper)
-        self.img_iter = image_iter # Generate image per 
-        self.width = width  # Network width from argparser
-        self.depth = depth  # Network depth from argparser
-        self.checkpoint_path = checkpoint_path  # Path to the checkpoint file
-        img = imageio.imread(image_path)
-        self.img = transforms.ToTensor()(img).to(device).type(torch.float32)
-        coordinates, features = util.to_coordinates_and_features(self.img)
-        self.coordinates, self.features = coordinates.to(device, dtype), features.to(device, dtype)
-        self.image_save_path = image_save_path
-        
 
-    # Implement the get_nn_weights method
-    def get_nn_weights(self, model, checkpoint_path):
-        """
-        Retrieves and processes the weights of the given neural network model.
 
-        Args:
-            model: The neural network model.
-            checkpoint_path (str): Path to the checkpoint file containing the model weights.
-
-        Returns:
-            tuple: Contains the model, parameters, parameter dictionary, 
-                   absolute parameters, signs, norms, lambda inverse, and checkpoint.
-        """
+    def get_nn_weights(self):
         param_d = {}
         with torch.no_grad():
             # Load the checkpoint
-            checkpoint = torch.load(checkpoint_path)
-            model.load_state_dict(checkpoint)
+            # checkpoint = torch.load(checkpoint_path)
+            # model.load_state_dict(checkpoint)
 
             # Prepare to collect model parameters
-            model.eval()
+            # self.model.eval()
             params = []
             norms = []
             print('Target network weights:')
             
-            for (name, p) in model.named_parameters():
+            for (name, p) in self.model.named_parameters():
                 if p.requires_grad:
                     weights = deepcopy(p.view(-1))
                     norm = torch.norm(weights)
@@ -118,8 +145,7 @@ class surp:
                     print(f'{name}: {p.size()}')
 
             # Concatenate all the parameters and norms
-            params = torch.cat(params)
-            norms = torch.cat(norms)
+            params, norms = torch.cat(params), torch.cat(norms)
 
             # Save sign and absolute values of weights
             signs = torch.sign(params).float().cuda()  # Convert to float and move to GPU
@@ -131,9 +157,8 @@ class surp:
 
         print(f'Total target network params: {len(params)}\n')
 
-        return model, params, param_d, params_abs, signs, norms, lam_inv, checkpoint
-
-
+        return params, param_d, params_abs, signs, norms, lam_inv
+    
     def enc_step(self):
         param_list = self.params_res
         lambda_inv = self.lam_inv
@@ -152,7 +177,7 @@ class surp:
             # Update U:
             self.params_res[m] = self.params_res[m] - self.lam_inv*self.scale_factor
             return m, k
-
+        
     def load_reconst_weights(self, w_hat):
         i = 0
         w_hat = w_hat*self.signs
@@ -163,7 +188,6 @@ class surp:
             new_state_dict[k] = w_hat[i:(i + k_size)].view(k_shape)
             i += k_size
         self.model.load_state_dict(new_state_dict)
-
 
     def successive_refine(self):
         refresh_count = 0  # Handling the empty list of indices scenario
@@ -193,8 +217,8 @@ class surp:
                     #print("Current Iteration:", i)
                     w_hat = deepcopy(self.params_abs_recon)
                     self.load_reconst_weights(w_hat)
-                    psnr, sparsity = self.synthesize_image(w_hat, i)
-
+                    psnr = self.synthesize_image(type = 'SuRP', iter = i)
+                    sparsity = self.compute_sparsity(w_hat)
                     # Log iteration, PSNR, and sparsity
                     iters.append(i)
                     psnrs.append(psnr)
@@ -209,26 +233,10 @@ class surp:
 
         # After the loop, save the plot
         self.plot_psnr_sparsity(iters, spars, psnrs)
-
-
-    def synthesize_image(self, w_hat, iter):
-        '''
-        This will take the SURP network and reconstruct the image. It also computes PSNR
-        '''
-
-        # Image Reconstruction 
-        with torch.no_grad():
-            img_recon = self.model(self.coordinates).reshape(self.img.shape[1], self.img.shape[2], 3).permute(2, 0, 1)
-            save_image(torch.clamp(img_recon, 0, 1).to('cpu'), os.path.join(self.image_save_path, f'test{iter}.png')) 
-
-        # Compute PSNR 
-        psnr = util.get_clamped_psnr(img_recon, self.img) 
-        # print("PSNR:", psnr)
-        
-        # Compute sparsity:
-        sparsity = torch.sum(w_hat == 0).item()/w_hat.numel()
-        # print("Sparsity:", sparsity)
-        return psnr, sparsity
+        self.save_model()
+    
+    def compute_sparsity(self, w_hat):
+        return torch.sum(w_hat == 0).item()/w_hat.numel()
 
     def plot_psnr_sparsity(self, iters, spars, psnrs):
         """
@@ -275,5 +283,3 @@ class surp:
         print(f"Plot saved at {os.path.join(self.image_save_path, 'sparsity_psnr_plot.png')}")
         # plt.show()
 
-    
-    

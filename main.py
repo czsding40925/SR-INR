@@ -5,21 +5,24 @@ import json
 import os
 import random
 import torch
-import util
-import surp 
-from siren import Siren
+import modules.util as util
+from modules.siren import Siren
 from torchvision import transforms
 from torchvision.utils import save_image
-from training import Trainer
+from modules.training import Trainer
+# Set up torch and cuda
+dtype = torch.float32
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+torch.set_default_tensor_type('torch.cuda.FloatTensor' if torch.cuda.is_available() else 'torch.FloatTensor')
 
-# TODO: Add sparse model 
+# Set random seeds. Not gonna bother to add an argparser for this one
+torch.manual_seed(random.randint(1, int(1e6)))
+torch.cuda.manual_seed_all(random.randint(1, int(1e6)))
 
 parser = argparse.ArgumentParser()
-parser.add_argument("-ld", "--logdir", help="Path to save logs", default=f"/tmp/{getpass.getuser()}")
+parser.add_argument("-ld", "--logdir", help="Path to save logs", default="results")
 parser.add_argument("-ni", "--num_iters", help="Number of iterations to train for", type=int, default=50000)
 parser.add_argument("-lr", "--learning_rate", help="Learning rate", type=float, default=2e-4)
-parser.add_argument("-se", "--seed", help="Random seed", type=int, default=random.randint(1, int(1e6)))
-parser.add_argument("-fd", "--full_dataset", help="Whether to use full dataset", action='store_true')
 parser.add_argument("-iid", "--image_id", help="Image ID to train on, if not the full dataset", type=int, default=15)
 parser.add_argument("-lss", "--layer_size", help="Layer sizes as list of ints", type=int, default=28)
 parser.add_argument("-nl", "--num_layers", help="Number of layers", type=int, default=10)
@@ -32,20 +35,6 @@ parser.add_argument("-ri","--refine_iter", help = "number of refine iterations",
 
 
 args = parser.parse_args()
-
-# Set up torch and cuda
-dtype = torch.float32
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-torch.set_default_tensor_type('torch.cuda.FloatTensor' if torch.cuda.is_available() else 'torch.FloatTensor')
-
-# Set random seeds
-torch.manual_seed(args.seed)
-torch.cuda.manual_seed_all(args.seed)
-
-if args.full_dataset:
-    min_id, max_id = 1, 24  # Kodak dataset runs from kodim01.png to kodim24.png
-else:
-    min_id, max_id = args.image_id, args.image_id
 
 # Dictionary to register mean values (both full precision and half precision)
 # results = {'fp_bpp': [], 'hp_bpp': [], 'fp_psnr': [], 'hp_psnr': []}
@@ -140,6 +129,7 @@ for i in range(min_id, max_id + 1):
     if torch.cuda.is_available():
         func_rep = func_rep.half().to('cuda')
         coordinates = coordinates.half().to('cuda')
+        torch.save()
 
         # Calculate model size in half precision
         hp_bpp = util.bpp(model=func_rep, image=img)
