@@ -56,13 +56,27 @@ def create_gif_from_images(image_id, image_folder, output_gif, fps=10):
     
     # Read and store images
     images = []
-    for filename in image_files:
+    residues = [] 
+    output_residues_gif = image_folder + '/residues'
+    if not os.path.exists(output_residues_gif):
+        os.makedirs(output_residues_gif)
+    for i, filename in enumerate(image_files):
         filepath = os.path.join(image_folder, filename)
         images.append(imageio.imread(filepath))
 
+        if i>0:
+          residue = np.abs(images[i].astype(np.int16) - images[i-1].astype(np.int16))
+          residue_filename = os.path.join(output_residues_gif, f"residue_{i}.png")
+          imageio.imwrite(residue_filename, residue.astype(np.uint8))
+          residues.append(residue.astype(np.uint8))  # Store for creating the GIF
+  
     # Save images as a GIF
     imageio.mimsave(output_gif, images, fps=fps)
     print(f"GIF saved at {output_gif}")
+
+    # Save residue images as a GIF
+    imageio.mimsave(os.path.join(output_residues_gif, "result_animation.gif"), residues, fps=fps)
+    print(f"Residue GIF saved at {output_residues_gif}")
 
 def plot_psnr_sparsity(iters, spars, psnrs, save_path):
         """
@@ -103,9 +117,41 @@ def plot_psnr_sparsity(iters, spars, psnrs, save_path):
         fig.tight_layout()
 
         # Save the plot to the specified path
-        image_save_path = "results/sr_images"
-        os.makedirs(image_save_path, exist_ok=True)
         plt.savefig(os.path.join(save_path, "sparsity_psnr_plot.png"))
         print(f"Plot saved at {os.path.join(save_path, 'sparsity_psnr_plot.png')}")
         # plt.show()
+
+def plot_ssim_sparsity(iters, spars, ssims, save_path):
+
+    # Create a figure and a single set of axes
+    fig, ax1 = plt.subplots(figsize=(10, 6))
+
+    # Plot Iterations vs. Sparsity on the left y-axis
+    ax1.plot(iters, spars, marker='o', linestyle='-', color='b', label='Sparsity')
+    ax1.set_xlabel('Iterations')
+    ax1.set_ylabel('Sparsity', color='b')
+    ax1.tick_params(axis='y', labelcolor='b')
+    ax1.grid(True)
+        
+    # Create a second y-axis sharing the same x-axis for PSNR
+    ax2 = ax1.twinx()  
+    ax2.plot(iters, ssims, marker='o', linestyle='-', color='r', label='MS-SSIMS')
+    ax2.set_ylabel('MS-SSIMS', color='r')
+    ax2.tick_params(axis='y', labelcolor='r')
+
+    # Set title for the plot
+    plt.title('Iterations vs. Sparsity and MS-SSIMS')
+
+    # Combine legends from both axes
+    lines_1, labels_1 = ax1.get_legend_handles_labels()
+    lines_2, labels_2 = ax2.get_legend_handles_labels()
+    ax1.legend(lines_1 + lines_2, labels_1 + labels_2, loc='upper left')
+
+    # Adjust layout for better spacing
+    fig.tight_layout()
+
+    # Save the plot to the specified path
+    plt.savefig(os.path.join(save_path, "sparsity_ssims_plot.png"))
+    print(f"Plot saved at {os.path.join(save_path, 'sparsity_psnr_plot.png')}")
+    # plt.show()
 

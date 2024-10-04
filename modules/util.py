@@ -5,6 +5,7 @@ from typing import Dict
 import copy 
 import os
 import imageio 
+from pytorch_msssim import ssim, ms_ssim, SSIM, MS_SSIM
 
 DTYPE_BIT_SIZE: Dict[dtype, int] = {
     torch.float32: 32,
@@ -157,6 +158,9 @@ def extract_weights(model):
 
     return all_weights
 
+def compute_ms_ssim(image_1, image_2):
+    image2 = torch.clamp(image_2, 0, 1)  # Clamps values between 0 and 1
+    return ms_ssim(image_1.unsqueeze(0), image_2.unsqueeze(0), data_range=1, size_average=True).item()
 
 
 

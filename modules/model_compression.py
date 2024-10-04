@@ -23,6 +23,7 @@ import os
 import tqdm
 import modules.plotting as plotting 
 from modules.training import Trainer 
+
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 dtype = torch.float32
 
@@ -75,13 +76,17 @@ class base_model:
             else: 
                 # to handle successive refinement iteration case 
                 save_image(torch.clamp(img_recon, 0, 1).to('cpu'), self.image_save_path + f'/{self.compression_type}_reconstruction_{self.image_id}_{iter}.png')
+        # PSNR 
         psnr = util.get_clamped_psnr(self.img, img_recon)
-        return img_recon, psnr  
+        # MS-SSIM
+        ms_ssim = util.compute_ms_ssim(self.img, img_recon)
+        return img_recon, psnr, ms_ssim
     
     def save_model(self):
         path = self.image_save_path+f'/{self.compression_type}_model_{self.image_id}.pt'
         torch.save(self.model, path)
         print(f"Model saved at {path}")
+      
 
 
 class pruning(base_model):
@@ -96,7 +101,7 @@ class pruning(base_model):
         trainer.train(self.coordinates, self.features, num_iters=self.refine_iter)
         self.save_model()
         psnr = self.synthesize_image()
-        print("PSNR:", psnr[1])
+        print("PSNR:", psnr[1], "MS-SSIM:", psnr[2])
 
 
 class quantization(base_model):
@@ -109,7 +114,7 @@ class quantization(base_model):
             self.model.half().to(device)
         self.save_model()
         psnr = self.synthesize_image()
-        print("PSNR:", psnr[1])
+        print("PSNR:", psnr[1], "MS-SSIM:", psnr[2])
 
 
 class surp(base_model):
@@ -207,6 +212,7 @@ class surp(base_model):
         iters = []
         spars = []
         psnrs = []
+        ssims = []
         # Plot a empirical weight distribution first 
         self.plot_empirical_weight_distribution()
 
@@ -231,22 +237,25 @@ class surp(base_model):
                     #print("Current Iteration:", i)
                     w_hat = deepcopy(self.params_abs_recon)
                     self.load_reconst_weights(w_hat)
-                    img_recon, psnr = self.synthesize_image(iter = i)
+                    img_recon, psnr, ms_ssim = self.synthesize_image(iter = i)
                     sparsity = self.compute_sparsity(w_hat)
                     # Log iteration, PSNR, and sparsity
                     iters.append(i)
                     psnrs.append(psnr)
                     spars.append(sparsity)
+                    ssims.append(ms_ssim)
                     
                 # Update tqdm bar with the latest PSNR and sparsity
-                t.set_postfix(psnr=f"{psnr:.2f}", sparsity=f"{sparsity:.2f}")
+                t.set_postfix(psnr=f"{psnr:.2f}", sparsity=f"{sparsity:.2f}", ms_ssim = f"{ms_ssim:.2f}")
 
                 # Update Gamma and Lambda
                 self.gamma = (self.n - 1) / (self.n - self.scale_factor)
                 self.lam_inv = self.gamma * (self.n - self.scale_factor) / self.n * self.lam_inv
 
         # After the loop, save the plot
-        plotting.plot_psnr_sparsity(iters, spars, psnrs, self.image_save_path)
+        plotting.plot_psnr_sparsity(iters, spars, psnrs, self.image_save_path) # iteration vs psnr and sparsity
+        plotting.plot_ssim_sparsity(iters, spars, ssims, self.image_save_path) # iteration vs ms-ssims and sparsity
+
         self.save_model()
         # Also create a gif 
         plotting.create_gif_from_images(self.image_id, self.image_save_path, os.path.join(self.image_save_path, "result_animation.gif"))

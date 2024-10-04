@@ -25,6 +25,7 @@ python compress.py --image_id 21 --compression_type SuRP --layer_size 150 --num_
 image_iter is the number of iterations per each image synthesis.
 
 For the existing models:
-* Image 1 is trained with layer size of 50 and num_layers of 15 (a deeper net with less weights per layer).
-* Image 21 is trained with layer size of 150 and num_layers of 2 (a shallower net with more weights per layer).
+* Image 1 is trained with layer_size of 50 and num_layers of 15 (a deeper net with less weights per layer).
+* Image 21 is trained with layer_size of 150 and num_layers of 2 (a shallower net with more weights per layer).
+* Image 22 is trained with layer_size of 300 and num_layers of 2 (a shallower net with even more weights per layer).
 
