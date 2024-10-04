@@ -21,6 +21,7 @@ import imageio
 import matplotlib.pyplot as plt
 import os
 import tqdm
+import modules.plotting as plotting 
 from modules.training import Trainer 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 dtype = torch.float32
@@ -28,8 +29,10 @@ dtype = torch.float32
 class base_model:
     def __init__(self, model, image_id, compression_type, width, depth):
         self.image_id = image_id 
-        self.state_dict = torch.load(self.get_model_path)
-        self.model = model.load_state_dict(self.state_dict)
+        self.model = model 
+        self.state_dict = torch.load(self.get_model_path())
+        self.model.load_state_dict(self.state_dict)
+        self.model.to(device)
         self.compression_type = compression_type
         self.width = width # layer size
         self.depth = depth # lazyer depth 
@@ -44,7 +47,7 @@ class base_model:
         return img 
     
     def get_model_path(self):
-        model_path = f"results/image_{self.image_id}/best_model_{self.image_id}"
+        model_path = f"results/image_{self.image_id}/best_model_{self.image_id}.pt"
         return model_path
 
     def get_save_path(self):
@@ -58,27 +61,33 @@ class base_model:
     
     def synthesize_image(self, iter = None):
         # type full_precision/sr/quantized/pruned
-        with torch.no_grad:
-            img_recon = self.model(self.coordinates).reshape(self.img.shape[1], self.img.shape[2], 3).permute(2, 0, 1)
+        with torch.no_grad():
+            # Handle quantization case 
+            if self.compression_type == "Quantization":
+                self.coordinates.half().to(device)
+                img_recon = self.model(self.coordinates).reshape(self.img.shape[1], self.img.shape[2], 3).permute(2, 0, 1)
+            else:
+                img_recon = self.model(self.coordinates).reshape(self.img.shape[1], self.img.shape[2], 3).permute(2, 0, 1)
+            # Handle iterative reconstruction case in SuRP
             if iter is None: 
                 save_image(torch.clamp(img_recon, 0, 1).to('cpu'), self.image_save_path + f'/{self.compression_type}_reconstruction_{self.image_id}.png')
+                print(f'Image Saved at {self.image_save_path}/{self.compression_type}_reconstruction_{self.image_id}.png')
             else: 
                 # to handle successive refinement iteration case 
                 save_image(torch.clamp(img_recon, 0, 1).to('cpu'), self.image_save_path + f'/{self.compression_type}_reconstruction_{self.image_id}_{iter}.png')
-            print(f"Image Saved at {self.image_save_path}/{type}_reconstruction_{self.image_id}.png" )
         psnr = util.get_clamped_psnr(self.img, img_recon)
         return img_recon, psnr  
     
     def save_model(self):
-        path = self.image_save_path+f'{self.compression_type}_model_{self.image_id}'
+        path = self.image_save_path+f'/{self.compression_type}_model_{self.image_id}.pt'
         torch.save(self.model, path)
         print(f"Model saved at {path}")
 
 
 class pruning(base_model):
     def __init__(self, model, image_id, compression_type, width, depth, pruning_ratio, refine_iter):
-        super.__init__(model, image_id, compression_type, width, depth)
-        self.pruning_percent = pruning_ratio
+        super().__init__(model, image_id, compression_type, width, depth)
+        self.pruning_ratio = pruning_ratio
         self.refine_iter = refine_iter
     
     def prune(self):
@@ -87,12 +96,12 @@ class pruning(base_model):
         trainer.train(self.coordinates, self.features, num_iters=self.refine_iter)
         self.save_model()
         psnr = self.synthesize_image()
-        print("PSNR:", psnr)
+        print("PSNR:", psnr[1])
 
 
 class quantization(base_model):
     def __init__(self, model, image_id, compression_type, width, depth, quantization_mode):
-        super.__init__(model, image_id, compression_type, width, depth)
+        super().__init__(model, image_id, compression_type, width, depth)
         self.quantization_mode = quantization_mode
 
     def quantize(self):
@@ -100,24 +109,27 @@ class quantization(base_model):
             self.model.half().to(device)
         self.save_model()
         psnr = self.synthesize_image()
-        print("PSNR:", psnr)
+        print("PSNR:", psnr[1])
 
 
 class surp(base_model):
     def __init__(self, model, image_id, compression_type, width, depth, total_iter, img_iter):
-        super.__init__(model, image_id, compression_type, width, depth)
+        super().__init__(model, image_id, compression_type, width, depth)
         self.params, self.param_d, params_abs, self.signs, self.norms, self.lam_inv = self.get_nn_weights()
         self.params_abs = deepcopy(params_abs) 
         self.params_res = deepcopy(params_abs) # What does res stand for? 
         self.params_abs_recon = torch.zeros_like(params_abs)
         self.total_iter = total_iter # Total number of iterations (L in the paper)
         self.img_iter = img_iter # Generate image per 
-        self.n = len(self.param_abs)
+        self.n = len(self.params_abs)
         self.scale_factor = np.log(float(self.n)/float(np.log(self.n)))
         self.alpha = 10 / self.scale_factor # might change 10 to others
         self.lam_inv = self.alpha * self.lam_inv
         self.gamma = 1 # From the config files (resnet/vgg). What is this? 
 
+    def plot_empirical_weight_distribution(self):
+        params_numpy = self.params.detach().cpu().numpy()
+        plotting.plot_weight_dist(params_numpy, self.image_save_path)
 
     def get_nn_weights(self):
         param_d = {}
@@ -182,7 +194,7 @@ class surp(base_model):
         i = 0
         w_hat = w_hat*self.signs
         w_hat = w_hat*self.norms
-        new_state_dict = deepcopy(self.nn_state_dict)
+        new_state_dict = deepcopy(self.state_dict)
         for k, k_shape in self.param_d.items():
             k_size = k_shape.numel()
             new_state_dict[k] = w_hat[i:(i + k_size)].view(k_shape)
@@ -195,7 +207,9 @@ class surp(base_model):
         iters = []
         spars = []
         psnrs = []
-        
+        # Plot a empirical weight distribution first 
+        self.plot_empirical_weight_distribution()
+
         # Create a tqdm progress bar
         with tqdm.trange(self.total_iter, ncols=100) as t:
             for i in t:
@@ -217,7 +231,7 @@ class surp(base_model):
                     #print("Current Iteration:", i)
                     w_hat = deepcopy(self.params_abs_recon)
                     self.load_reconst_weights(w_hat)
-                    psnr = self.synthesize_image(type = 'SuRP', iter = i)
+                    img_recon, psnr = self.synthesize_image(iter = i)
                     sparsity = self.compute_sparsity(w_hat)
                     # Log iteration, PSNR, and sparsity
                     iters.append(i)
@@ -232,54 +246,10 @@ class surp(base_model):
                 self.lam_inv = self.gamma * (self.n - self.scale_factor) / self.n * self.lam_inv
 
         # After the loop, save the plot
-        self.plot_psnr_sparsity(iters, spars, psnrs)
+        plotting.plot_psnr_sparsity(iters, spars, psnrs, self.image_save_path)
         self.save_model()
+        # Also create a gif 
+        plotting.create_gif_from_images(self.image_id, self.image_save_path, os.path.join(self.image_save_path, "result_animation.gif"))
     
     def compute_sparsity(self, w_hat):
         return torch.sum(w_hat == 0).item()/w_hat.numel()
-
-    def plot_psnr_sparsity(self, iters, spars, psnrs):
-        """
-        Creates a single plot with two y-axes: 
-        - Iterations vs. Sparsity on the left y-axis
-        - Iterations vs. PSNR on the right y-axis
-
-        Args:
-            iters (np.ndarray): Array of iteration values.
-            spars (np.ndarray): Array of sparsity values corresponding to the iterations.
-            psnrs (np.ndarray): Array of PSNR values corresponding to the iterations.
-        """
-        # Create a figure and a single set of axes
-        fig, ax1 = plt.subplots(figsize=(10, 6))
-
-        # Plot Iterations vs. Sparsity on the left y-axis
-        ax1.plot(iters, spars, marker='o', linestyle='-', color='b', label='Sparsity')
-        ax1.set_xlabel('Iterations')
-        ax1.set_ylabel('Sparsity', color='b')
-        ax1.tick_params(axis='y', labelcolor='b')
-        ax1.grid(True)
-        
-        # Create a second y-axis sharing the same x-axis for PSNR
-        ax2 = ax1.twinx()  
-        ax2.plot(iters, psnrs, marker='o', linestyle='-', color='r', label='PSNR')
-        ax2.set_ylabel('PSNR', color='r')
-        ax2.tick_params(axis='y', labelcolor='r')
-
-        # Set title for the plot
-        plt.title('Iterations vs. Sparsity and PSNR')
-
-        # Combine legends from both axes
-        lines_1, labels_1 = ax1.get_legend_handles_labels()
-        lines_2, labels_2 = ax2.get_legend_handles_labels()
-        ax1.legend(lines_1 + lines_2, labels_1 + labels_2, loc='upper left')
-
-        # Adjust layout for better spacing
-        fig.tight_layout()
-
-        # Save the plot to the specified path
-        image_save_path = "results/sr_images"
-        os.makedirs(image_save_path, exist_ok=True)
-        plt.savefig(os.path.join(self.image_save_path, "sparsity_psnr_plot.png"))
-        print(f"Plot saved at {os.path.join(self.image_save_path, 'sparsity_psnr_plot.png')}")
-        # plt.show()
-

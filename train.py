@@ -61,4 +61,13 @@ print(f'Full precision bpp: {fp_bpp:.2f}')
 trainer.train(coordinates, features, num_iters=args.num_iters)
 print(f'Best training psnr: {trainer.best_vals["psnr"]:.2f}')
 # Save best model
-torch.save(trainer.best_model, os.path.join(path, f'best_model_{args.image_id}'))
+torch.save(trainer.best_model, os.path.join(path, f'best_model_{args.image_id}.pt'))
+
+# Reconstruct images
+# Update current model to be best model
+func_rep.load_state_dict(trainer.best_model)
+
+# Save full precision image reconstruction
+with torch.no_grad():
+    img_recon = func_rep(coordinates).reshape(img.shape[1], img.shape[2], 3).permute(2, 0, 1)
+    save_image(torch.clamp(img_recon, 0, 1).to('cpu'), os.path.join(path, f'Best_Model_Reconstruction_{args.image_id}.png'))

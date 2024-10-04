@@ -3,9 +3,6 @@ import torch
 from torch._C import dtype
 from typing import Dict
 import copy 
-from scipy.stats import norm, laplace
-import random 
-import matplotlib.pyplot as plt
 import os
 import imageio 
 
@@ -105,8 +102,6 @@ def get_clamped_psnr(img, img_recon):
 def mean(list_):
     return np.mean(list_)
 
-
-## TODO: Define Model Pruning 
 def apply_magnitude_pruning(trained_model, pruning_percent=0.2):
     """
     Prunes the weights of the trained_model by setting the smallest weights to zero and returns a new pruned model.
@@ -162,70 +157,6 @@ def extract_weights(model):
 
     return all_weights
 
-## TODO: Weight Distribution Fit (Gaussian and Laplace)
-def plot_weight_dist(all_weights):
-    # Fit a Gaussian distribution to the data
-    mu_gauss, std_gauss = norm.fit(all_weights)
-
-    # Fit a Laplacian distribution to the data
-    mu_laplace, b_laplace = laplace.fit(all_weights)
-
-    # Plot the histogram
-    plt.figure(figsize=(10, 6))
-    plt.hist(all_weights, bins=2000, density=True, color='blue', alpha=0.6, label='Weights Histogram')
-
-    # Create an array of values for the x-axis (for plotting the PDFs)
-    x = np.linspace(-0.05, 0.05, 1000)
-
-    # Plot the Gaussian fit
-    pdf_gauss = norm.pdf(x, mu_gauss, std_gauss)
-    plt.plot(x, pdf_gauss, 'r-', linewidth=2, label='Gaussian fit')
-
-    # Plot the Laplacian fit
-    pdf_laplace = laplace.pdf(x, mu_laplace, b_laplace)
-    plt.plot(x, pdf_laplace, 'g-', linewidth=2, label='Laplacian fit')
-
-    # Add labels and title
-    plt.title("Histogram of Neural Network Weights with Gaussian and Laplacian Fits")
-    plt.xlabel("Weight Value")
-    plt.ylabel("Density")
-    plt.xlim(-0.05, 0.05)
-    plt.legend()
-    plt.grid(True)
-
-    # Show the plot
-    plt.show()
-    print(len(all_weights))
-    plt.savefig('weight_plot_histogram.png')
 
 
-## For fun: Turn the generated images into GIFs.
-
-def create_gif_from_images(image_folder, output_gif, fps=5):
-    """
-    Create a GIF from a series of images in a folder.
-
-    Args:
-        image_folder (str): The path to the folder containing images.
-        output_gif (str): The output path and filename for the GIF.
-        fps (int): Frames per second (speed of the GIF).
-    """
-    # Get a sorted list of all images in the directory
-    image_files = sorted([f for f in os.listdir(image_folder) if f.startswith('test') and f.endswith('.png')],
-                         key=lambda x: int(x.replace('test', '').replace('.png', '')))
-    
-    # Check if there are images to process
-    if not image_files:
-        print("No images found in the directory!")
-        return
-    
-    # Read and store images
-    images = []
-    for filename in image_files:
-        filepath = os.path.join(image_folder, filename)
-        images.append(imageio.imread(filepath))
-
-    # Save images as a GIF
-    imageio.mimsave(output_gif, images, fps=fps)
-    print(f"GIF saved at {output_gif}")
 

@@ -6,7 +6,6 @@ import argparse
 import random
 import torch
 import modules.util as util
-from surp import surp
 from modules.siren import Siren
 from torchvision import transforms
 from torchvision.utils import save_image
@@ -48,7 +47,7 @@ func_rep = Siren(dim_in=2, dim_hidden=args.layer_size, dim_out=3,
 if args.compression_type == "Mag_Pruning":
     compressor = pruning(func_rep, args.image_id, args.compression_type, 
                          args.layer_size, args.num_layers,
-                         args.pruning_ratio, args.refine_iter)
+                         args.prune_ratio, args.refine_iter)
     compressor.prune()
 elif args.compression_type == "Quantization":
     compressor = quantization(func_rep, args.image_id, args.compression_type, 
@@ -59,6 +58,6 @@ elif args.compression_type == "Quantization":
 elif args.compression_type == "SuRP":
     compressor = surp(func_rep, args.image_id, args.compression_type, 
                     args.layer_size, args.num_layers,
-                    args.total_iter, args.img_iter)
+                    args.surp_iter, args.image_iter)
     compressor.successive_refine()
         
