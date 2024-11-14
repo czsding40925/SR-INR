@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import os
 import imageio
+import seaborn as sns 
 
 def plot_weight_dist(all_weights, save_path):
     # Fit a Gaussian distribution to the data
@@ -154,4 +155,27 @@ def plot_ssim_sparsity(iters, spars, ssims, save_path):
     plt.savefig(os.path.join(save_path, "sparsity_ssims_plot.png"))
     print(f"Plot saved at {os.path.join(save_path, 'sparsity_psnr_plot.png')}")
     # plt.show()
+
+def plot_recon_loc(layer_nums, num_layers, save_path):
+  # Create an empty 2D array to count reconstructions per layer per iteration
+    num_iterations = len(layer_nums)
+    reconstruction_counts = np.zeros((layer_nums, num_iterations))
+
+    # Fill in the counts based on the layer data
+    for i, layers in enumerate(layer_nums):
+        for layer in layers:
+            reconstruction_counts[layer - 1, i] += 1  # Assuming layer indices are 1-based
+
+    # Plotting the heatmap
+    plt.figure(figsize=(12, 6))
+    sns.heatmap(reconstruction_counts, cmap="YlGnBu", annot=False, cbar=True, 
+                xticklabels=100 if num_iterations > 100 else 10, yticklabels=1)
+    plt.title("Reconstruction Heatmap: Layer vs Iterations")
+    plt.xlabel("Iteration")
+    plt.ylabel("Layer")
+    # plt.show()
+    print(f"Plot saved at {os.path.join(save_path, 'weights_loc_per_iter.png')}")
+
+
+
 

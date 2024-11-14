@@ -1,5 +1,4 @@
 # Successive Refinement for Implicit Neural Representation (SR-INR)
-
 ![Demo GIF](results/image_22/SuRP/result_animation_looped.gif)
 
 To train a model from scratch (using Kodak image 21 for example), run:

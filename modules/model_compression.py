@@ -206,6 +206,26 @@ class surp(base_model):
             i += k_size
         self.model.load_state_dict(new_state_dict)
 
+    def where_does_it_go(self, m):
+        # Define the number of weights in each layer:
+        first_layer_weights = (2 + 1) * self.width  # First layer weights including bias
+        hidden_layer_weights = self.width * (self.width + 1)  # Hidden layer weights including bias
+        last_layer_weights = 3 * self.width + 3  # Last layer weights including bias
+
+        # Check if m is in the first layer
+        if m < first_layer_weights:
+            return 1
+
+        # Adjust m by removing the first layer weights count
+        m -= first_layer_weights
+
+        # Check if m is in one of the hidden layers
+        if m < hidden_layer_weights * (self.depth - 1):
+            return (m // hidden_layer_weights) + 2
+
+        # If m is not in the hidden layers, it must be in the last layer
+        return self.depth + 1
+
     def successive_refine(self):
         refresh_count = 0  # Handling the empty list of indices scenario
 
@@ -213,6 +233,8 @@ class surp(base_model):
         spars = []
         psnrs = []
         ssims = []
+        layer_nums = []
+        # ms = []
         # Plot a empirical weight distribution first 
         self.plot_empirical_weight_distribution()
 
@@ -220,6 +242,9 @@ class surp(base_model):
         with tqdm.trange(self.total_iter, ncols=100) as t:
             for i in t:
                 m, k = self.enc_step()
+                if m is not None:
+                    layer_nums.append(self.where_does_it_go(m))
+                    #ms.append(m)
                 while m is None:
                     refresh_count += 1
                     if refresh_count % 20 == 0 and refresh_count > 1:
@@ -231,8 +256,12 @@ class surp(base_model):
                     
                     # Compute m, k again after the parameter lambda is refreshed.
                     m, k = self.enc_step()
+                    if m is not None:
+                        layer_nums.append(self.where_does_it_go(m))
+                        #ms.append(m)
+                    
 
-                # For every 5000 iterations, reconstruct an image and compute PSNR
+                # For every img_iter iterations, reconstruct an image and compute PSNR
                 if i % self.img_iter == 0:
                     #print("Current Iteration:", i)
                     w_hat = deepcopy(self.params_abs_recon)
@@ -259,6 +288,12 @@ class surp(base_model):
         self.save_model()
         # Also create a gif 
         plotting.create_gif_from_images(self.image_id, self.image_save_path, os.path.join(self.image_save_path, "result_animation.gif"))
+
+        # Plot m locations 
+        #plotting.plot_recon_loc(layer_nums, self.depth, self.image_save_path)
+        np.save('recon_data',np.array(layer_nums))
+        #print(layer_nums)
+        #print(ms)
     
     def compute_sparsity(self, w_hat):
         return torch.sum(w_hat == 0).item()/w_hat.numel()

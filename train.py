@@ -43,7 +43,7 @@ img = transforms.ToTensor()(img).float().to(device, dtype)
 # Setup model
 func_rep = Siren(dim_in=2, dim_hidden=args.layer_size, dim_out=3,
     num_layers=args.num_layers, final_activation=torch.nn.Identity(),
-    w0_initial=args.w0_initial, w0=args.w0).to(device)
+    w0_initial=args.w0_initial, w0=args.w0, use_bias = True).to(device)
 
 print(f"Fitting SIREN to Kodak Image{args.image_id}...")
 # Set up training

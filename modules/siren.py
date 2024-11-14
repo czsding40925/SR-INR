@@ -87,7 +87,7 @@ class Siren(nn.Module):
 
         final_activation = nn.Identity() if final_activation is None else final_activation
         self.last_layer = SirenLayer(dim_in=dim_hidden, dim_out=dim_out, w0=w0,
-                                use_bias=use_bias, activation=final_activation)
+                                use_bias=use_bias, activation=final_activation) #use_bias = use_bias
 
     def forward(self, x):
         x = self.net(x)
