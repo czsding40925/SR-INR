@@ -7,6 +7,10 @@ import os
 import imageio 
 from pytorch_msssim import ssim, ms_ssim, SSIM, MS_SSIM
 
+from copy import deepcopy 
+from torchvision import transforms
+from torchvision.utils import save_image
+
 DTYPE_BIT_SIZE: Dict[dtype, int] = {
     torch.float32: 32,
     torch.float: 32,
@@ -29,6 +33,41 @@ DTYPE_BIT_SIZE: Dict[dtype, int] = {
     torch.long: 64,
     torch.bool: 1
 }
+
+
+def svd_analysis(image_id: int):
+    """
+    Looks at the singular values of each layer in the model and shares the number of 
+    singular values to explain 50%, 75%, 90%, and 95% of the variance in the data.
+
+    Args:
+        image_id (int): ID corresponding to image on which model was fit.
+    """
+    state_dict = torch.load(f"results/image_{image_id}/best_model_{image_id}.pt")    
+    print(f"[IMAGE ID {image_id}]")
+    for (name, p) in state_dict.items():
+        if "weight" in name:
+            u, s, v = torch.linalg.svd(p)
+            singular_values_squared = s**2
+            total_variance = singular_values_squared.sum()
+            explained_variance_ratio = singular_values_squared / total_variance
+            variance_accumulator = 0
+            variance_notification = [1, 1, 1, 1]
+            for i in range(len(explained_variance_ratio)):
+                variance_accumulator += explained_variance_ratio[i]
+                if variance_accumulator >= 0.95 and variance_notification[0]:
+                    variance_notification = [0,0,0,0]
+                    print(f"{i} principal components to explain 95% variance for {name}")
+                elif variance_accumulator >= 0.90 and variance_notification[1]:
+                    variance_notification = [1,0,0,0]
+                    print(f"{i} principal components to explain 90% variance for {name}")
+                elif variance_accumulator >= 0.75 and variance_notification[2]:
+                    variance_notification = [1,1,0,0]
+                    print(f"{i} principal components to explain 75% variance for {name}")
+                elif variance_accumulator >= 0.5 and variance_notification[3]:
+                    variance_notification = [1,1,1,0]
+                    print(f"{i} principal components to explain 50% variance for {name}")          
+            print()
 
 
 def to_coordinates_and_features(img):

@@ -60,31 +60,22 @@ class base_model:
             os.makedirs(path)
         return path 
     
-    def synthesize_image(self, iter = None):
-        # type full_precision/sr/quantized/pruned
+    def synthesize_image(self):
+        # type full_precision/quantized/pruned
         with torch.no_grad():
-            # Handle quantization case 
-            if self.compression_type == "Quantization":
-                self.coordinates.half().to(device)
-                img_recon = self.model(self.coordinates).reshape(self.img.shape[1], self.img.shape[2], 3).permute(2, 0, 1)
-            else:
-                img_recon = self.model(self.coordinates).reshape(self.img.shape[1], self.img.shape[2], 3).permute(2, 0, 1)
-            # Handle iterative reconstruction case in SuRP
-            if iter is None: 
-                save_image(torch.clamp(img_recon, 0, 1).to('cpu'), self.image_save_path + f'/{self.compression_type}_reconstruction_{self.image_id}.png')
-                print(f'Image Saved at {self.image_save_path}/{self.compression_type}_reconstruction_{self.image_id}.png')
-            else: 
-                # to handle successive refinement iteration case 
-                save_image(torch.clamp(img_recon, 0, 1).to('cpu'), self.image_save_path + f'/{self.compression_type}_reconstruction_{self.image_id}_{iter}.png')
+            img_recon = self.model(self.coordinates).reshape(self.img.shape[1], self.img.shape[2], 3).permute(2, 0, 1)
+            save_image(torch.clamp(img_recon, 0, 1).to('cpu'), self.image_save_path + f'/{self.compression_type}_reconstruction_{self.image_id}.png')
+            print(f'Image Saved at {self.image_save_path}/{self.compression_type}_reconstruction_{self.image_id}.png')
         # PSNR 
         psnr = util.get_clamped_psnr(self.img, img_recon)
         # MS-SSIM
         ms_ssim = util.compute_ms_ssim(self.img, img_recon)
         return img_recon, psnr, ms_ssim
     
-    def save_model(self):
-        path = self.image_save_path+f'/{self.compression_type}_model_{self.image_id}.pt'
-        torch.save(self.model, path)
+    def save_model(self, path=None):
+        if path is None: 
+            path = self.image_save_path+f'/{self.compression_type}_model_{self.image_id}.pt'
+        torch.save(self.model.state_dict(), path)
         print(f"Model saved at {path}")
       
 
@@ -104,6 +95,7 @@ class pruning(base_model):
         print("PSNR:", psnr[1], "MS-SSIM:", psnr[2])
 
 
+# NOTE: it seems the model is already quantized; model.half() doesn't do anything
 class quantization(base_model):
     def __init__(self, model, image_id, compression_type, width, depth, quantization_mode):
         super().__init__(model, image_id, compression_type, width, depth)
@@ -115,6 +107,48 @@ class quantization(base_model):
         self.save_model()
         psnr = self.synthesize_image()
         print("PSNR:", psnr[1], "MS-SSIM:", psnr[2])
+    
+    def synthesize_image(self):
+        self.coordinates.half().to(device)
+        return super().synthesize_image()
+
+
+class low_rank(base_model):
+    def __init__(self, model, image_id, compression_type, width, depth, pc_count):
+        super().__init__(model, image_id, compression_type, width, depth)
+        self.pc_count = pc_count
+    
+    def reduce_model_rank(self):
+        state_dict = deepcopy(self.state_dict)
+        for (name, p) in self.state_dict.items():
+            # only reducing rank of hidden weight layers
+            if "net" in name and "weight" in name:
+                u, s, v = torch.svd(p)
+                u_k = u[:, :self.pc_count]
+                s_k = s[:self.pc_count]
+                v_k = v[:, :self.pc_count]
+                state_dict[name] = u_k @ torch.diag(s_k) @ v_k.T # updated p_low_rank
+        self.state_dict = state_dict
+        self.model.load_state_dict(state_dict)
+        self.model.to(device)
+        self.save_model()
+        psnr = self.synthesize_image()
+        print("PSNR:", psnr[1], "MS-SSIM:", psnr[2])
+    
+    def synthesize_image(self):
+        with torch.no_grad():
+            img_recon = self.model(self.coordinates).reshape(self.img.shape[1], self.img.shape[2], 3).permute(2, 0, 1)
+            save_image(torch.clamp(img_recon, 0, 1).to('cpu'), self.image_save_path + f'/{self.compression_type}{self.pc_count}_reconstruction_{self.image_id}.png')
+            print(f'Image Saved at {self.image_save_path}/{self.compression_type}{self.pc_count}_reconstruction_{self.image_id}.png')
+            # PSNR 
+            psnr = util.get_clamped_psnr(self.img, img_recon)
+            # MS-SSIM
+            ms_ssim = util.compute_ms_ssim(self.img, img_recon)
+            return img_recon, psnr, ms_ssim
+    
+    def save_model(self):
+        path = self.image_save_path+f'/{self.compression_type}{self.pc_count}_model_{self.image_id}.pt'
+        super().save_model(path=path)
 
 
 class surp(base_model):
@@ -297,3 +331,15 @@ class surp(base_model):
     
     def compute_sparsity(self, w_hat):
         return torch.sum(w_hat == 0).item()/w_hat.numel()
+    
+    def synthesize_image(self, iter):
+        # type full_precision/sr/quantized/pruned
+        with torch.no_grad():
+            img_recon = self.model(self.coordinates).reshape(self.img.shape[1], self.img.shape[2], 3).permute(2, 0, 1)
+            # to handle successive refinement iteration case 
+            save_image(torch.clamp(img_recon, 0, 1).to('cpu'), self.image_save_path + f'/{self.compression_type}_reconstruction_{self.image_id}_{iter}.png')
+        # PSNR 
+        psnr = util.get_clamped_psnr(self.img, img_recon)
+        # MS-SSIM
+        ms_ssim = util.compute_ms_ssim(self.img, img_recon)
+        return img_recon, psnr, ms_ssim

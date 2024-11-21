@@ -10,12 +10,12 @@ from modules.siren import Siren
 from torchvision import transforms
 from torchvision.utils import save_image
 from modules.training import Trainer
-from modules.model_compression import pruning, quantization, surp 
+from modules.model_compression import pruning, quantization, surp, low_rank 
 
 parser = argparse.ArgumentParser()
 # General 
 parser.add_argument("--image_id", help="Image ID to train on, if not the full dataset", type=int)
-parser.add_argument("--compression_type", help="Choose one of Mag_Pruning/Quantization/SuRP", type=str)
+parser.add_argument("--compression_type", help="Choose one of Mag_Pruning/Quantization/SuRP/Low_Rank", type=str)
 parser.add_argument("--layer_size", help="Layer sizes as list of ints", type=int) # Depending on trained model size
 parser.add_argument("--num_layers", help="Number of layers", type=int) # Depending on trained model size
 parser.add_argument("--w0", help="w0 parameter for SIREN model.", type=float, default=30.0)
@@ -28,6 +28,8 @@ parser.add_argument("--quant_level", help = "Quantization only: quantization lev
 # SuRP specific 
 parser.add_argument("--surp_iter", help="Number of refinement steps", type=int, default=125000)
 parser.add_argument("--image_iter", help="Number of steps per image synthesis", type=int, default=2500)
+# Low Rank Specific
+parser.add_argument("--pc_count", help= "Number of principal components to preserve following rank reduction", type=int, default = None)
 args = parser.parse_args()
 
 # Set up torch and cuda
@@ -54,10 +56,13 @@ elif args.compression_type == "Quantization":
                          args.layer_size, args.num_layers,
                          args.quant_level)
     compressor.quantize()
-
 elif args.compression_type == "SuRP":
     compressor = surp(func_rep, args.image_id, args.compression_type, 
                     args.layer_size, args.num_layers,
                     args.surp_iter, args.image_iter)
     compressor.successive_refine()
-        
+elif args.compression_type == "Low_Rank":
+    compressor = low_rank(func_rep, args.image_id, args.compression_type, 
+                    args.layer_size, args.num_layers,
+                    args.pc_count)
+    compressor.reduce_model_rank()
