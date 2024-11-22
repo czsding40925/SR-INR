@@ -63,7 +63,7 @@ class base_model:
     def synthesize_image(self):
         # type full_precision/quantized/pruned
         with torch.no_grad():
-            img_recon = self.model(self.coordinates).reshape(self.img.shape[1], self.img.shape[2], 3).permute(2, 0, 1)
+            img_recon = self.model(self.coordinates).reshape(self.img.shape[1], self.img.shape[2], 3).permute(2, 0, 1).to(torch.float32)
             save_image(torch.clamp(img_recon, 0, 1).to('cpu'), self.image_save_path + f'/{self.compression_type}_reconstruction_{self.image_id}.png')
             print(f'Image Saved at {self.image_save_path}/{self.compression_type}_reconstruction_{self.image_id}.png')
         # PSNR 
@@ -95,21 +95,21 @@ class pruning(base_model):
         print("PSNR:", psnr[1], "MS-SSIM:", psnr[2])
 
 
-# NOTE: it seems the model is already quantized; model.half() doesn't do anything
 class quantization(base_model):
     def __init__(self, model, image_id, compression_type, width, depth, quantization_mode):
         super().__init__(model, image_id, compression_type, width, depth)
         self.quantization_mode = quantization_mode
 
     def quantize(self):
-        if self.quantization_mode == 0.5:
+        if self.quantization_mode == "half":
             self.model.half().to(device)
         self.save_model()
         psnr = self.synthesize_image()
         print("PSNR:", psnr[1], "MS-SSIM:", psnr[2])
     
     def synthesize_image(self):
-        self.coordinates.half().to(device)
+        self.coordinates = self.coordinates.half()
+        self.coordinates.to(device)
         return super().synthesize_image()
 
 
